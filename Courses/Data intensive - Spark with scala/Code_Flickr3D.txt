@@ -1,0 +1,192 @@
+package assignment
+
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkContext._
+import org.apache.spark.rdd.RDD
+import annotation.tailrec
+import scala.reflect.ClassTag
+
+import java.io.StringReader
+import com.opencsv.CSVReader
+
+import java.util.Date
+import java.text.SimpleDateFormat
+import Math._
+
+import java.io.StringWriter
+import com.opencsv.CSVWriter
+import scala.collection.JavaConversions._
+import java.io.FileWriter
+import java.io.BufferedWriter
+
+// import org.apache.spark.ml.clustering.KMeans
+
+case class Photo(id: String,
+                 latitude: Double,
+                 longitude: Double,
+                 date: Date)
+
+object Flickr3D extends Flickr {
+
+  @transient lazy val conf: SparkConf = new SparkConf().setMaster("local").setAppName("NYPD")
+  @transient lazy val sc: SparkContext = new SparkContext(conf)
+
+  /** Main function */
+  def main(args: Array[String]): Unit = {
+
+    val lines = sc.textFile("src/main/resources/photos/flickr3D.csv").mapPartitionsWithIndex { (idx, iter) => if (idx == 0) iter.drop(1) else iter }
+    val raw = rawPhotos(lines)
+    val date_formatter = new java.text.SimpleDateFormat("yyyy:MM:dd HH:mm:ss")
+    val seasons = Array(0, 0, 33.33, 33.33, 33.33, 66.66, 66.66, 66.66, 100, 100, 100, 0)
+
+    def getSeason(month: Int): Double = {
+      seasons(month)
+    }
+
+    val initialMeans = lines.takeSample(false, kmeansKernels)
+      .flatMap(l => {
+        val a = l.split(", ");
+        try {
+          Some(a(1).toDouble, a(2).toDouble, getSeason(date_formatter.parse(a(3)).getMonth))
+        }
+        catch {
+          case e: Exception => None
+        }
+      })
+    val size = initialMeans.length
+    val min_latitude_means = initialMeans.map(v => v._1).min
+    val max_latitude_means = initialMeans.map(v => v._1).max
+    val min_longitude_means = initialMeans.map(v => v._2).min
+    val max_longitude_means = initialMeans.map(v => v._2).max
+
+    val normalized_seasonal_means = initialMeans.map(v => (100 * (v._1 - min_latitude_means) / max_latitude_means,
+      100 * (v._2 - min_longitude_means) / max_longitude_means,
+      v._3))
+
+    val means = kmeans(normalized_seasonal_means, raw).map(v => ((max_latitude_means * v._1 / 100) + min_latitude_means,
+      max_longitude_means * (v._2) / 100 + min_longitude_means,
+      v._3 match {
+        case x if x < 16 => "Winter"
+        case x if x >= 16 && x < 50 => "Spring"
+        case x if x >= 50 && x < 84 => "Summer"
+        case _ => "Fall"
+      }))
+    val out = new BufferedWriter(new FileWriter("src/main/resources/photos/result_3D.csv"))
+    val writer = new CSVWriter(out, '\n')
+    writer.writeNext(Array("Latitude, Longitude, Season"), false)
+    writer.writeNext(means.map(v => v._1.toString + ", " + v._2.toString + ", " + v._3), false)
+    out.close()
+    means.foreach(println)
+  }
+}
+
+class Flickr extends Serializable {
+
+  /** K-means parameter: Convergence criteria */
+  def kmeansEta: Double = 20.0D
+
+  /** K-means parameter: Number of clusters */
+  def kmeansKernels = 16
+
+  /** K-means parameter: Maximum iterations */
+  def kmeansMaxIterations = 50
+
+  //(lat, lon)
+  def EuclideanDistance(c1: (Double, Double, Double), c2: (Double, Double, Double)) = {
+    val R = 6371e3
+    val lat1 = toRadians(c1._1)
+    val lon1 = toRadians(c1._2)
+    val lat2 = toRadians(c2._1)
+    val lon2 = toRadians(c2._2)
+    val x = (lon2 - lon1) * Math.cos((lat1 + lat2) / 2)
+    val y = (lat2 - lat1)
+    val z = (c1._3 - c2._3)
+    Math.sqrt(x * x + y * y + z * z)
+  }
+
+  /** Return the index of the closest mean */
+  def findClosest(p: (Double, Double, Double), centers: Array[(Double, Double, Double)]): Int = {
+    var bestIndex = 0
+    var closest = Double.PositiveInfinity
+    for (i <- 0 until centers.length) {
+      val tempDist = EuclideanDistance(p, centers(i))
+      if (tempDist < closest) {
+        closest = tempDist
+        bestIndex = i
+      }
+    }
+    bestIndex
+  }
+
+  //  /** Average the vectors */
+  //  def averageVectors(ps: Iterable[Photo]): (Double, Double) = ???
+
+  def rawPhotos(lines: RDD[String]): RDD[Photo] = {
+    val date_formatter = new java.text.SimpleDateFormat("yyyy:MM:dd HH:mm:ss")
+    val rawPhotosList = lines.flatMap(l => {
+      val a = l.split(", ");
+      try {
+        Some(Photo(a(0), a(1).toDouble, a(2).toDouble, date_formatter.parse(a(3))))
+      }
+      catch {
+        case e: Exception => None
+      }
+    })
+    rawPhotosList
+  }
+
+  @tailrec final def kmeans(means: Array[(Double, Double, Double)], vectors: RDD[Photo], iter: Int = 1): Array[(Double, Double, Double)] = {
+    import java.util.Calendar
+    var cal = Calendar.getInstance
+
+    var distance_flag = 1
+    val num = iter + 1
+    val min_latitude_vectors = vectors.map(v => v.latitude).min()
+    val max_latitude_vectors = vectors.map(v => v.latitude).max()
+    val min_longitude_vectors = vectors.map(v => v.longitude).min()
+    val max_longitude_vectors = vectors.map(v => v.longitude).max()
+    val seasons = Array(0, 0, 33.33, 33.33, 33.33, 66.66, 66.66, 66.66, 100, 100, 100, 0)
+
+    def getSeason(month: Int): Double = {
+      seasons(month)
+    }
+
+    val seasonal_vectors = vectors.map(v => (100 * (v.latitude - min_latitude_vectors) / max_latitude_vectors,
+      100 * (v.longitude - min_longitude_vectors) / max_longitude_vectors,
+      getSeason((v.date).getMonth)))
+
+    val closest_center_for_photos = seasonal_vectors
+      .map(v => (findClosest((v._1, v._2, v._3), means), (1, v._1, v._2, v._3))).sortByKey() // (index,(1,lat,lon,season_code))
+
+    val new_centers = closest_center_for_photos
+      .reduceByKey((v1, v2) => (v1._1 + v2._1, v1._2 + v2._2, v1._3 + v2._3, v1._4 + v2._4))
+      .mapValues(v => (v._2 / v._1, v._3 / v._1, (v._4 / v._1).toDouble)).sortByKey() // (index,(avg-lat, avg-lon, avg-season))
+
+    val new_centers_arr = new_centers.collect() // rdd to array (index,(avg-lat,avg-lon))
+
+    // filling missing centers
+    val new_means = means.clone()
+    for (i <- 0 to new_centers_arr.length - 1) {
+      new_means(new_centers_arr(i)._1) = new_centers_arr(i)._2
+    }
+
+    def check_distance(): Unit = {
+      for (i <- 0 to means.length - 1) {
+        if (EuclideanDistance(means(i), new_means(i)) > kmeansEta) {
+          distance_flag = 0
+        }
+      }
+    }
+
+    check_distance()
+
+    if (num > kmeansMaxIterations + 1 || distance_flag == 1) {
+      new_means
+    }
+    else {
+      kmeans(new_means, vectors, num)
+    }
+  }
+
+}

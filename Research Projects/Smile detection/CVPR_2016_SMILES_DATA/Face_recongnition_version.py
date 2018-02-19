@@ -26,14 +26,14 @@ for i in range(58,6171):
     name = data['image_name'][i]
     # if os.path.isfile(src_path + name):
 
-    # img = Image.open(src_path + data['image_name'][i])
-    # img2 = img.crop((data[' bbox_x'][i], data[' bbox_y'][i],
-    #                 data[' bbox_x'][i] + data[' bbox_width'][i],
-    #                 data[' bbox_y'][i] + data[' bbox_height'][i]))
+    # img = Image.open(src_path + data['image_name'][j])
+    # img2 = img.crop((data[' bbox_x'][j], data[' bbox_y'][j],
+    #                 data[' bbox_x'][j] + data[' bbox_width'][j],
+    #                 data[' bbox_y'][j] + data[' bbox_height'][j]))
 
-    # new_path = src_path + str(data[' Smile'][i]+2) + '/' + data['image_name'][i]
+    # new_path = src_path + str(data[' Smile'][j]+2) + '/' + data['image_name'][j]
     # img2.save(new_path)
-    # shutil.move(src_path + data['image_name'][i], src_path + str(data[' Smile'][i]) + '/' + data['image_name'][i])
+    # shutil.move(src_path + data['image_name'][j], src_path + str(data[' Smile'][j]) + '/' + data['image_name'][j])
 
 # for filename in os.listdir(src_path):
     # img = io.imread(new_path + filename, mode='RGB')
